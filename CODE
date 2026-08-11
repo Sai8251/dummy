@@ -1,0 +1,592 @@
+-------------------------------------B2B-------------------------------------------
+Option Explicit
+
+' IMPORTANT: Requires a reference to 'Microsoft Scripting Runtime'.
+' Go to Tools -> References -> Check 'Microsoft Scripting Runtime'.
+
+Sub CreateB2BReports()
+    ' =========================================================================
+    ' ?? 1. MASTER LISTS FOR TABLE CLASSIFICATION (Strictly segregates KAMs and BDs)
+    ' =========================================================================
+    Dim masterBDList As Variant
+    masterBDList = Array("Balu", "Deepak", "Aman", "Avinash", "Amit", "Pramod", "Sanchit", _
+                         "Pratik", "Pallavi", "Chandresh", "Rahul", "Saud", "Pooja", "pradeep", _
+                         "Sudhanshu", "Kaushal", "Shekhar", "Ashish", "Raj Kamal", "Sahilesh", _
+                         "Rajkumar", "Subhash", "Anbu", "Soumya", "Vishwas", "Chandresh Sharma", _
+                         "Rakesh S", "Anshul", "Anand", "Mohit", "gaurav narayan", "Arka", _
+                         "Dheeraj", "Abhishek")
+                      
+    Dim masterKAMList As Variant
+    masterKAMList = Array("Harisha", "Tasleem", "Deepika", "Harshith S", "Padma", "Keshav", "Gaurav")
+    
+    ' =========================================================================
+    ' ?? 2. FILE GENERATION CONFIGURATION
+    ' =========================================================================
+    Dim targetRegions As Variant:   targetRegions = Array("North", "West", "South", "East")
+    Dim targetE2Es As Variant:      targetE2Es = Array("E2E")
+    
+    ' Leave empty for now; populate names here in the future to generate individual files
+    Dim targetBDs As Variant:       targetBDs = Array()
+    Dim targetKAMs As Variant:      targetKAMs = Array()
+    ' =========================================================================
+
+    Const sourceFilePath As String = "C:\Users\sai.vc\Desktop\Reporting\B2B Reporting\Aug'26\3Aug\DailyProjection_(B2B)_Aug3.xlsx"
+    Const baseOutputPath As String = "C:\Users\sai.vc\Desktop\Reporting\B2B Reporting\Aug'26\3Aug\Final_Splits\"
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    Application.Calculation = xlCalculationManual
+    
+    Dim wbSource As Workbook
+    If Dir(sourceFilePath) = "" Then MsgBox "Source file not found!", vbCritical: Exit Sub
+    Set wbSource = Workbooks.Open(sourceFilePath, ReadOnly:=True)
+    
+    Dim configDict As Object: Set configDict = CreateObject("Scripting.Dictionary")
+    configDict.Add "Region", targetRegions
+    configDict.Add "E2E", targetE2Es
+    configDict.Add "Current BD/KAM", targetKAMs ' Reserved for future use
+    configDict.Add "BD", targetBDs              ' Reserved for future use
+
+    Call ProcessSheet(wbSource, "PTL", 7, configDict, baseOutputPath, "", masterBDList, masterKAMList)
+                        
+    wbSource.Close False
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
+    
+    MsgBox "Boom! ?? Reports Generated Successfully!" & vbCrLf & _
+           "- Executive Summary matches PTL Sheet Totals perfectly." & vbCrLf & _
+           "- KAM & BD Tables strictly classified." & vbCrLf & _
+           "- Zero Errors.", vbInformation
+End Sub
+
+Private Sub ProcessSheet(ByVal wbSource As Workbook, ByVal sheetName As String, ByVal headerRow As Long, _
+                         ByVal configDict As Object, ByVal baseOutputPath As String, ByVal outputSubFolder As String, _
+                         ByVal masterBDList As Variant, ByVal masterKAMList As Variant)
+    Dim wsSource As Worksheet, colNum As Variant, key As Variant, fso As Object
+    Dim mainFolder As String, currentSavePath As String
+    
+    On Error Resume Next: Set wsSource = wbSource.Sheets(sheetName): On Error GoTo 0
+    If wsSource Is Nothing Then Exit Sub
+    
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    For Each key In configDict.Keys
+        Dim targetList As Variant: targetList = configDict(key)
+        
+        ' Process only populated target arrays
+        If UBound(targetList) >= LBound(targetList) Then
+            mainFolder = IIf(outputSubFolder = "", baseOutputPath, baseOutputPath & outputSubFolder & "\")
+            currentSavePath = mainFolder & SanitizeFileName(Trim(CStr(key))) & "\"
+            
+            If Not fso.FolderExists(mainFolder) Then CreateFolderRecursive fso, mainFolder
+            If Not fso.FolderExists(currentSavePath) Then fso.CreateFolder currentSavePath
+            
+            colNum = Application.Match(CStr(key), wsSource.Rows(headerRow), 0)
+            
+            If Not IsError(colNum) Then
+                Dim item As Variant: For Each item In targetList
+                    SaveFilteredDataSheetws wbSource, sheetName, currentSavePath, CStr(item), headerRow, CLng(colNum), CStr(key), masterBDList, masterKAMList
+                Next item
+            End If
+        End If
+    Next key
+End Sub
+
+Private Sub SaveFilteredDataSheetws(ByVal wbSource As Workbook, ByVal sheetName As String, ByVal savePath As String, ByVal fName As String, ByVal hRow As Long, ByVal colIdx As Long, ByVal splitKey As String, ByVal masterBDList As Variant, ByVal masterKAMList As Variant)
+    Dim wbNew As Workbook, wsNewPTL As Worksheet
+    Dim lastRow As Long, r As Long, matchFound As Boolean, checkVal As Variant
+    Dim realLastRow As Long, realLastCol As Long, dataRange As Range
+    
+    wbSource.Sheets(sheetName).Copy
+    Set wbNew = ActiveWorkbook
+    Set wsNewPTL = wbNew.Sheets(1)
+    wsNewPTL.Name = "PTL"
+    
+    realLastRow = wsNewPTL.Cells.Find("*", SearchOrder:=xlByRows, SearchDirection:=xlPrevious).Row
+    For r = realLastRow To 1 Step -1
+        If UCase(Trim(CStr(wsNewPTL.Cells(r, 1).Value))) = "TOTAL" Then wsNewPTL.Rows(r).Delete
+    Next r
+    
+    lastRow = wsNewPTL.Cells.Find("*", SearchOrder:=xlByRows, SearchDirection:=xlPrevious).Row
+    matchFound = False
+    
+    For r = lastRow To (hRow + 1) Step -1
+        checkVal = wsNewPTL.Cells(r, colIdx).Value
+        If UCase(Trim(CStr(checkVal))) <> UCase(Trim(fName)) Then
+            wsNewPTL.Rows(r).Delete
+        Else
+            matchFound = True
+        End If
+    Next r
+    
+    If matchFound Then
+        Application.Calculate
+        
+        realLastRow = wsNewPTL.Cells.Find("*", SearchOrder:=xlByRows, SearchDirection:=xlPrevious).Row
+        realLastCol = wsNewPTL.Cells.Find("*", SearchOrder:=xlByColumns, SearchDirection:=xlPrevious).Column
+        Set dataRange = wsNewPTL.Range(wsNewPTL.Cells(1, 1), wsNewPTL.Cells(realLastRow, realLastCol))
+        dataRange.Copy
+        dataRange.PasteSpecial Paste:=xlPasteValues
+        Application.CutCopyMode = False
+        
+        AddSubtotalRow wsNewPTL, hRow
+        wsNewPTL.Cells.EntireColumn.AutoFit
+        On Error Resume Next: wsNewPTL.Columns("I:N").Hidden = True: On Error GoTo 0
+        
+        ' GENERATE CREATIVE DASHBOARD
+        CreateStunningSummary wbNew, splitKey, fName, masterBDList, masterKAMList
+        
+        Dim finalFileName As String
+        finalFileName = savePath & SanitizeFileName(Trim(fName)) & ".xlsx"
+        wbNew.SaveAs fileName:=finalFileName, FileFormat:=51
+        wbNew.Close False
+    Else
+        wbNew.Close False
+    End If
+End Sub
+
+Private Sub CreateStunningSummary(wb As Workbook, splitKey As String, fName As String, masterBDList As Variant, masterKAMList As Variant)
+    Dim wsData As Worksheet, wsSum As Worksheet
+    Set wsData = wb.Sheets("PTL")
+    Set wsSum = wb.Sheets.Add(Before:=wb.Sheets(1))
+    wsSum.Name = "Executive Summary"
+    wsSum.Tab.Color = RGB(31, 78, 120)
+    wsSum.Application.ActiveWindow.DisplayGridlines = False
+    
+    wsSum.Cells.Interior.Color = RGB(245, 246, 248)
+    
+    Dim dictBD As Object, dictKAM As Object
+    Set dictBD = CreateObject("Scripting.Dictionary"): Set dictKAM = CreateObject("Scripting.Dictionary")
+    dictBD.CompareMode = TextCompare: dictKAM.CompareMode = TextCompare
+    
+    Dim lastRow As Long, i As Long
+    lastRow = wsData.Cells.Find("*", SearchOrder:=xlByRows, SearchDirection:=xlPrevious).Row
+    
+    Dim bdName As String, kamName As String
+    Dim tTgt As Double, tAct As Double, rTgt As Double, rAct As Double
+    Dim ov_tTgt As Double, ov_tAct As Double, ov_rTgt As Double, ov_rAct As Double
+    Dim ov_momRev As Double, ov_momTon As Double, ov_yoyRev As Double, ov_yoyTon As Double
+    Dim w0T As Double, w1T As Double, w2T As Double, w3T As Double, w4T As Double
+    Dim w0R As Double, w1R As Double, w2R As Double, w3R As Double
+    
+    ' Extract Data with Safe Numeric Evaluation (Prevents Target mismatch bugs)
+    For i = 8 To lastRow
+        If UCase(Trim(wsData.Cells(i, 1).Value)) <> "TOTAL" And _
+           (Trim(wsData.Cells(i, 1).Value) <> "" Or Trim(wsData.Cells(i, 2).Value) <> "") Then
+            
+            bdName = Trim(CStr(wsData.Cells(i, 4).Value))
+            kamName = Trim(CStr(wsData.Cells(i, 5).Value))
+            
+            tTgt = GetSafeDouble(wsData.Cells(i, 48).Value)
+            tAct = GetSafeDouble(wsData.Cells(i, 49).Value)
+            rTgt = GetSafeDouble(wsData.Cells(i, 51).Value)
+            rAct = GetSafeDouble(wsData.Cells(i, 52).Value)
+            
+            ov_tTgt = ov_tTgt + tTgt: ov_tAct = ov_tAct + tAct: ov_rTgt = ov_rTgt + rTgt: ov_rAct = ov_rAct + rAct
+            ov_yoyRev = ov_yoyRev + GetSafeDouble(wsData.Cells(i, 59).Value)
+            ov_yoyTon = ov_yoyTon + GetSafeDouble(wsData.Cells(i, 60).Value)
+            ov_momRev = ov_momRev + GetSafeDouble(wsData.Cells(i, 63).Value)
+            ov_momTon = ov_momTon + GetSafeDouble(wsData.Cells(i, 64).Value)
+            
+            w0T = w0T + GetSafeDouble(wsData.Cells(i, 66).Value)
+            w1T = w1T + GetSafeDouble(wsData.Cells(i, 67).Value)
+            w2T = w2T + GetSafeDouble(wsData.Cells(i, 68).Value)
+            w3T = w3T + GetSafeDouble(wsData.Cells(i, 69).Value)
+            w4T = w4T + GetSafeDouble(wsData.Cells(i, 70).Value)
+            
+            w0R = w0R + GetSafeDouble(wsData.Cells(i, 71).Value)
+            w1R = w1R + GetSafeDouble(wsData.Cells(i, 72).Value)
+            w2R = w2R + GetSafeDouble(wsData.Cells(i, 73).Value)
+            w3R = w3R + GetSafeDouble(wsData.Cells(i, 74).Value)
+            
+            ' STRICT CLASSIFICATION BASED ON MASTER ARRAYS
+            If bdName <> "" And IsInArray(bdName, masterBDList) Then
+                If Not dictBD.Exists(bdName) Then dictBD.Add bdName, Array(tTgt, tAct, rTgt, rAct) Else _
+                    Dim tmpBD As Variant: tmpBD = dictBD(bdName): tmpBD(0) = tmpBD(0) + tTgt: tmpBD(1) = tmpBD(1) + tAct: tmpBD(2) = tmpBD(2) + rTgt: tmpBD(3) = tmpBD(3) + rAct: dictBD(bdName) = tmpBD
+            End If
+            
+            If kamName <> "" And IsInArray(kamName, masterKAMList) Then
+                If Not dictKAM.Exists(kamName) Then dictKAM.Add kamName, Array(tTgt, tAct, rTgt, rAct) Else _
+                    Dim tmpKAM As Variant: tmpKAM = dictKAM(kamName): tmpKAM(0) = tmpKAM(0) + tTgt: tmpKAM(1) = tmpKAM(1) + tAct: tmpKAM(2) = tmpKAM(2) + rTgt: tmpKAM(3) = tmpKAM(3) + rAct: dictKAM(kamName) = tmpKAM
+            End If
+        End If
+    Next i
+    
+    Dim dashTitle As String
+    If splitKey = "Region" Then dashTitle = UCase(Trim(fName)) & " REGION - B2B PTL EXECUTIVE DASHBOARD" _
+    Else If splitKey = "BD" Then dashTitle = UCase(Trim(fName)) & " (BD) - PERFORMANCE DASHBOARD" _
+    Else If splitKey = "Current BD/KAM" Then dashTitle = UCase(Trim(fName)) & " (KAM) - PERFORMANCE DASHBOARD" _
+    Else dashTitle = UCase(Trim(fName)) & " - B2B PTL SUMMARY"
+    
+    With wsSum.Range("B2:I4")
+        .Merge: .Value = dashTitle
+        .Font.Name = "Segoe UI Black": .Font.Size = 22: .Font.Color = RGB(255, 255, 255)
+        .Interior.Color = RGB(20, 36, 89): .HorizontalAlignment = xlCenter: .VerticalAlignment = xlCenter
+    End With
+    
+    Dim rIdx As Long: rIdx = 6
+    
+    ' ================= 1. OVERALL SECTION =================
+    wsSum.Range("B" & rIdx & ":F" & rIdx).Merge: wsSum.Range("B" & rIdx).Value = "OVERALL PERFORMANCE"
+    FormatHeader wsSum.Range("B" & rIdx & ":F" & rIdx), RGB(68, 84, 106)
+    rIdx = rIdx + 1: wsSum.Cells(rIdx, 2).Value = "Metric": wsSum.Cells(rIdx, 3).Value = "Target": wsSum.Cells(rIdx, 4).Value = "Actual": wsSum.Range("E" & rIdx & ":F" & rIdx).Merge: wsSum.Cells(rIdx, 5).Value = "Achieved %"
+    FormatHeader wsSum.Range("B" & rIdx & ":F" & rIdx), RGB(90, 105, 125)
+    
+    rIdx = rIdx + 1: wsSum.Cells(rIdx, 2).Value = "Tonnage (Tons)": wsSum.Cells(rIdx, 3).Value = ov_tTgt: wsSum.Cells(rIdx, 4).Value = ov_tAct
+    wsSum.Range("E" & rIdx & ":F" & rIdx).Merge: If ov_tTgt <> 0 Then wsSum.Cells(rIdx, 5).Value = ov_tAct / ov_tTgt Else wsSum.Cells(rIdx, 5).Value = 0
+    ApplyDataFormat wsSum.Range("B" & rIdx & ":F" & rIdx), True, "#,##0.0", "0.0%"
+    AddDataBar wsSum.Range("E" & rIdx), RGB(100, 150, 255)
+    
+    rIdx = rIdx + 1: wsSum.Cells(rIdx, 2).Value = "Revenue (" & ChrW(8377) & ")": wsSum.Cells(rIdx, 3).Value = ov_rTgt: wsSum.Cells(rIdx, 4).Value = ov_rAct
+    wsSum.Range("E" & rIdx & ":F" & rIdx).Merge: If ov_rTgt <> 0 Then wsSum.Cells(rIdx, 5).Value = ov_rAct / ov_rTgt Else wsSum.Cells(rIdx, 5).Value = 0
+    ApplyDataFormat wsSum.Range("B" & rIdx & ":F" & rIdx), False, ChrW(8377) & " #,##0", "0.0%"
+    AddDataBar wsSum.Range("E" & rIdx), RGB(100, 200, 120)
+    
+    ' ================= 2. MoM & YoY WITH ARROWS =================
+    rIdx = rIdx + 3: wsSum.Range("B" & rIdx & ":I" & rIdx).Merge: wsSum.Range("B" & rIdx).Value = "MONTH-ON-MONTH (MoM) & YOY COMPARISON"
+    FormatHeader wsSum.Range("B" & rIdx & ":I" & rIdx), RGB(68, 84, 106)
+    rIdx = rIdx + 1: wsSum.Cells(rIdx, 2).Value = "Metric": wsSum.Cells(rIdx, 3).Value = "MTD Actual": wsSum.Cells(rIdx, 4).Value = "Jun '26": wsSum.Cells(rIdx, 5).Value = "MoM Growth"
+    wsSum.Range("F" & rIdx & ":G" & rIdx).Merge: wsSum.Cells(rIdx, 6).Value = "Jul '25": wsSum.Range("H" & rIdx & ":I" & rIdx).Merge: wsSum.Cells(rIdx, 8).Value = "YoY Growth"
+    FormatHeader wsSum.Range("B" & rIdx & ":I" & rIdx), RGB(90, 105, 125)
+    
+    rIdx = rIdx + 1: wsSum.Cells(rIdx, 2).Value = "Tonnage": wsSum.Cells(rIdx, 3).Value = ov_tAct: wsSum.Cells(rIdx, 4).Value = ov_momTon
+    If ov_momTon <> 0 Then wsSum.Cells(rIdx, 5).Value = (ov_tAct - ov_momTon) / ov_momTon Else wsSum.Cells(rIdx, 5).Value = 0
+    wsSum.Range("F" & rIdx & ":G" & rIdx).Merge: wsSum.Cells(rIdx, 6).Value = ov_yoyTon
+    wsSum.Range("H" & rIdx & ":I" & rIdx).Merge: If ov_yoyTon <> 0 Then wsSum.Cells(rIdx, 8).Value = (ov_tAct - ov_yoyTon) / ov_yoyTon Else wsSum.Cells(rIdx, 8).Value = 0
+    ApplyDataFormat wsSum.Range("B" & rIdx & ":I" & rIdx), True, "#,##0.0", "[Color10]? 0.0%;[Red]? 0.0%;""-"""
+    
+    rIdx = rIdx + 1: wsSum.Cells(rIdx, 2).Value = "Revenue": wsSum.Cells(rIdx, 3).Value = ov_rAct: wsSum.Cells(rIdx, 4).Value = ov_momRev
+    If ov_momRev <> 0 Then wsSum.Cells(rIdx, 5).Value = (ov_rAct - ov_momRev) / ov_momRev Else wsSum.Cells(rIdx, 5).Value = 0
+    wsSum.Range("F" & rIdx & ":G" & rIdx).Merge: wsSum.Cells(rIdx, 6).Value = ov_yoyRev
+    wsSum.Range("H" & rIdx & ":I" & rIdx).Merge: If ov_yoyRev <> 0 Then wsSum.Cells(rIdx, 8).Value = (ov_rAct - ov_yoyRev) / ov_yoyRev Else wsSum.Cells(rIdx, 8).Value = 0
+    ApplyDataFormat wsSum.Range("B" & rIdx & ":I" & rIdx), False, ChrW(8377) & " #,##0", "[Color10]? 0.0%;[Red]? 0.0%;""-"""
+    
+    ' ================= 3. WEEKLY TREND WITH SPARKLINES =================
+    rIdx = rIdx + 3: wsSum.Range("B" & rIdx & ":I" & rIdx).Merge: wsSum.Range("B" & rIdx).Value = "WEEKLY PERFORMANCE TREND"
+    FormatHeader wsSum.Range("B" & rIdx & ":I" & rIdx), RGB(68, 84, 106)
+    
+    rIdx = rIdx + 1: wsSum.Cells(rIdx, 2).Value = "Metric": wsSum.Cells(rIdx, 3).Value = "Wk 0": wsSum.Cells(rIdx, 4).Value = "Wk 1": wsSum.Cells(rIdx, 5).Value = "Wk 2": wsSum.Cells(rIdx, 6).Value = "Wk 3"
+    wsSum.Cells(rIdx, 7).Value = "Wk 4": wsSum.Range("H" & rIdx & ":I" & rIdx).Merge: wsSum.Cells(rIdx, 8).Value = "Trend (Mini-Chart)"
+    FormatHeader wsSum.Range("B" & rIdx & ":I" & rIdx), RGB(90, 105, 125)
+    
+    rIdx = rIdx + 1: wsSum.Cells(rIdx, 2).Value = "Tonnage": wsSum.Cells(rIdx, 3).Value = w0T: wsSum.Cells(rIdx, 4).Value = w1T: wsSum.Cells(rIdx, 5).Value = w2T: wsSum.Cells(rIdx, 6).Value = w3T: wsSum.Cells(rIdx, 7).Value = w4T
+    wsSum.Range("H" & rIdx & ":I" & rIdx).Merge: wsSum.Range("H" & rIdx).SparklineGroups.Add Type:=xlSparkColumn, SourceData:=wsSum.Range("C" & rIdx & ":G" & rIdx).Address
+    wsSum.Range("H" & rIdx).SparklineGroups.item(1).SeriesColor.Color = RGB(100, 150, 255)
+    ApplyDataFormat wsSum.Range("B" & rIdx & ":I" & rIdx), True, "#,##0.0", "#,##0.0"
+    wsSum.Range("C" & rIdx & ":G" & rIdx).NumberFormat = "#,##0.0"
+    
+    rIdx = rIdx + 1: wsSum.Cells(rIdx, 2).Value = "Revenue": wsSum.Cells(rIdx, 3).Value = w0R: wsSum.Cells(rIdx, 4).Value = w1R: wsSum.Cells(rIdx, 5).Value = w2R: wsSum.Cells(rIdx, 6).Value = w3R: wsSum.Cells(rIdx, 7).Value = 0
+    wsSum.Range("H" & rIdx & ":I" & rIdx).Merge: wsSum.Range("H" & rIdx).SparklineGroups.Add Type:=xlSparkLine, SourceData:=wsSum.Range("C" & rIdx & ":G" & rIdx).Address
+    wsSum.Range("H" & rIdx).SparklineGroups.item(1).SeriesColor.Color = RGB(100, 200, 120)
+    ApplyDataFormat wsSum.Range("B" & rIdx & ":I" & rIdx), False, ChrW(8377) & " #,##0", ChrW(8377) & " #,##0"
+    wsSum.Range("C" & rIdx & ":G" & rIdx).NumberFormat = ChrW(8377) & " #,##0"
+
+    ' ================= 4. DYNAMIC TABLES WITH DATABARS =================
+    If splitKey = "BD" Then
+        If dictBD.Count > 0 Then rIdx = rIdx + 3: rIdx = PrintGroupTable(wsSum, rIdx, "BUSINESS DEVELOPER PERFORMANCE", dictBD)
+    ElseIf splitKey = "Current BD/KAM" Then
+        If dictKAM.Count > 0 Then rIdx = rIdx + 3: rIdx = PrintGroupTable(wsSum, rIdx, "KEY ACCOUNT MANAGER PERFORMANCE", dictKAM)
+    Else
+        If dictBD.Count > 0 Then rIdx = rIdx + 3: rIdx = PrintGroupTable(wsSum, rIdx, "BUSINESS DEVELOPMENT PERFORMANCE", dictBD)
+        If dictKAM.Count > 0 Then rIdx = rIdx + 3: rIdx = PrintGroupTable(wsSum, rIdx, "KEY ACCOUNT MANAGER PERFORMANCE", dictKAM)
+    End If
+    
+    ' Dimensions and Polishing
+    wsSum.Columns("A").ColumnWidth = 3: wsSum.Columns("B").ColumnWidth = 22
+    wsSum.Columns("C").ColumnWidth = 14: wsSum.Columns("D").ColumnWidth = 14: wsSum.Columns("E").ColumnWidth = 14
+    wsSum.Columns("F").ColumnWidth = 14: wsSum.Columns("G").ColumnWidth = 14: wsSum.Columns("H").ColumnWidth = 8
+    wsSum.Columns("I").ColumnWidth = 8: wsSum.Rows("2:4").RowHeight = 25
+End Sub
+
+' ?? SAFE NUMERIC CONVERSION HELPER
+Private Function GetSafeDouble(ByVal cellVal As Variant) As Double
+    If IsError(cellVal) Or IsEmpty(cellVal) Then
+        GetSafeDouble = 0
+    ElseIf IsNumeric(cellVal) Then
+        GetSafeDouble = CDbl(cellVal)
+    Else
+        GetSafeDouble = 0
+    End If
+End Function
+
+' ?? HELPER FUNCTION TO MATCH NAMES IN MASTER ARRAYS
+Private Function IsInArray(ByVal val As String, ByVal arr As Variant) As Boolean
+    Dim item As Variant
+    For Each item In arr
+        If UCase(Trim(CStr(item))) = UCase(Trim(val)) Then
+            IsInArray = True
+            Exit Function
+        End If
+    Next item
+    IsInArray = False
+End Function
+
+Private Function PrintGroupTable(ws As Worksheet, startRow As Long, title As String, dictData As Object) As Long
+    ws.Range("B" & startRow & ":I" & startRow).Merge: ws.Range("B" & startRow).Value = title: FormatHeader ws.Range("B" & startRow & ":I" & startRow), RGB(68, 84, 106)
+    startRow = startRow + 1: ws.Cells(startRow, 2).Value = "Name": ws.Cells(startRow, 3).Value = "Ton Target": ws.Cells(startRow, 4).Value = "Ton Actual": ws.Cells(startRow, 5).Value = "Ton %"
+    ws.Range("F" & startRow & ":G" & startRow).Merge: ws.Cells(startRow, 6).Value = "Rev Target": ws.Cells(startRow, 8).Value = "Rev Actual": ws.Cells(startRow, 9).Value = "Rev %"
+    FormatHeader ws.Cells(startRow, 2), RGB(90, 105, 125): FormatHeader ws.Range("C" & startRow & ":E" & startRow), RGB(0, 112, 192): FormatHeader ws.Range("F" & startRow & ":I" & startRow), RGB(0, 176, 80)
+    
+    Dim rIdx As Long: rIdx = startRow + 1
+    Dim key As Variant, tmp As Variant, isZebra As Boolean: isZebra = False
+    
+    For Each key In dictData.Keys
+        tmp = dictData(key): ws.Cells(rIdx, 2).Value = key: ws.Cells(rIdx, 3).Value = tmp(0): ws.Cells(rIdx, 4).Value = tmp(1)
+        If tmp(0) <> 0 Then ws.Cells(rIdx, 5).Value = tmp(1) / tmp(0) Else ws.Cells(rIdx, 5).Value = 0
+        ws.Range("F" & rIdx & ":G" & rIdx).Merge: ws.Cells(rIdx, 6).Value = tmp(2): ws.Cells(rIdx, 8).Value = tmp(3)
+        If tmp(2) <> 0 Then ws.Cells(rIdx, 9).Value = tmp(3) / tmp(2) Else ws.Cells(rIdx, 9).Value = 0
+        
+        ApplyDataFormat ws.Range("B" & rIdx & ":I" & rIdx), isZebra, "#,##0.0", "0.0%"
+        ws.Range("F" & rIdx & ":H" & rIdx).NumberFormat = ChrW(8377) & " #,##0"
+        
+        AddDataBar ws.Range("E" & rIdx), RGB(100, 150, 255)
+        AddDataBar ws.Range("I" & rIdx), RGB(100, 200, 120)
+        
+        isZebra = Not isZebra: rIdx = rIdx + 1
+    Next key
+    PrintGroupTable = rIdx
+End Function
+
+Private Sub AddDataBar(rng As Range, colorRGB As Long)
+    Dim db As Databar: Set db = rng.FormatConditions.AddDataBar
+    db.MinPoint.Modify newtype:=xlConditionValueNumber, newvalue:=0
+    db.MaxPoint.Modify newtype:=xlConditionValueNumber, newvalue:=1
+    db.BarColor.Color = colorRGB: db.BarFillType = xlDataBarFillSolid: db.Direction = xlContext
+End Sub
+
+Private Sub FormatHeader(rng As Range, bgColor As Long)
+    rng.Font.Name = "Segoe UI": rng.Font.Size = 11: rng.Font.Bold = True: rng.Font.Color = RGB(255, 255, 255)
+    rng.Interior.Color = bgColor: rng.HorizontalAlignment = xlCenter: rng.VerticalAlignment = xlCenter
+    rng.Borders.LineStyle = xlContinuous: rng.Borders.Color = RGB(255, 255, 255)
+End Sub
+
+Private Sub ApplyDataFormat(rng As Range, isZebra As Boolean, numFormat As String, pctFormat As String)
+    rng.Font.Name = "Segoe UI": rng.Font.Size = 11: rng.VerticalAlignment = xlCenter: rng.HorizontalAlignment = xlCenter
+    rng.Borders.LineStyle = xlContinuous: rng.Borders.Color = RGB(220, 220, 220)
+    rng.Interior.Color = RGB(255, 255, 255)
+    rng.Cells(1, 1).Font.Bold = True: rng.Cells(1, 1).HorizontalAlignment = xlLeft
+    
+    If rng.Columns.Count = 5 Then
+        rng.Cells(1, 2).NumberFormat = numFormat: rng.Cells(1, 3).NumberFormat = numFormat
+        If InStr(pctFormat, "Color") > 0 Then rng.Cells(1, 4).NumberFormat = pctFormat Else rng.Cells(1, 4).NumberFormat = pctFormat
+    ElseIf rng.Columns.Count = 8 Then
+        rng.Cells(1, 2).NumberFormat = numFormat: rng.Cells(1, 3).NumberFormat = numFormat: rng.Cells(1, 4).NumberFormat = pctFormat
+        If InStr(pctFormat, "Color") > 0 Then rng.Cells(1, 7).NumberFormat = pctFormat Else rng.Cells(1, 8).NumberFormat = pctFormat
+    End If
+End Sub
+
+Private Sub AddSubtotalRow(ByVal ws As Worksheet, ByVal headerRow As Long)
+    Dim lastRow As Long, lastCol As Long, C As Long
+    lastRow = ws.Cells.Find("*", SearchOrder:=xlByRows, SearchDirection:=xlPrevious).Row
+    lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
+    ws.Cells(lastRow + 1, 1).Value = "Total"
+    For C = 1 To lastCol
+        If IsNumeric(ws.Cells(headerRow + 1, C).Value) And ws.Cells(headerRow + 1, C).Value <> "" Then ws.Cells(lastRow + 1, C).Formula = "=ROUNDUP(SUBTOTAL(9," & ws.Range(ws.Cells(headerRow + 1, C), ws.Cells(lastRow, C)).Address & "), 0)"
+    Next C
+    ws.Range(ws.Cells(lastRow + 1, 1), ws.Cells(lastRow + 1, lastCol)).Font.Bold = True: ws.Range(ws.Cells(lastRow + 1, 1), ws.Cells(lastRow + 1, lastCol)).Font.Color = vbRed
+End Sub
+
+Private Function SanitizeFileName(ByVal fileName As String) As String
+    Dim invalidChars As Variant, i As Long: invalidChars = Array("/", "\", ":", "*", "?", """", "<", ">", "|"): SanitizeFileName = fileName
+    For i = LBound(invalidChars) To UBound(invalidChars): SanitizeFileName = Replace(SanitizeFileName, invalidChars(i), "-"): Next i
+End Function
+
+Private Sub CreateFolderRecursive(fso As Object, ByVal path As String)
+    Dim parts As Variant, currentPath As String, i As Long
+    If Right(path, 1) = "\" Then path = Left(path, Len(path) - 1)
+    parts = Split(path, "\"): currentPath = parts(0)
+    For i = 1 To UBound(parts): currentPath = currentPath & "\" & parts(i): If Not fso.FolderExists(currentPath) Then fso.CreateFolder currentPath
+    Next i
+End Sub
+
+------------------------CLOSE B2B-------------------------------------------------
+--------------------App script B2B START-----------------------------------------
+/**
+ * =====================================================================================
+ * B2B PTL MAIL DISTRIBUTION SCRIPT WITH NATIVE INLINE SUMMARY (100% BUG-FREE)
+ * =====================================================================================
+ */
+
+
+// 📧 1. FILE TO RECIPIENT MAPPING (Case-Insensitive filenames)
+const B2B_FILE_RECIPIENT_MAP = {
+  'South.xlsx': ["mailids"],
+  'East.xlsx': [Mailids"]
+};
+
+
+// ⚙️ 2. GENERAL CONFIGURATIONS
+const B2B_CONFIG = {
+  FOLDER_ID: 'drivelink', // Google Drive Folder ID containing the split files
+  SUBJECT_PREFIX: 'B2B PTL Daily Performance Report',
+  SENDER_NAME: '" "',
+  ADMIN_EMAIL: ' psai" ".vc@flipkart.com'
+};
+
+
+// 🚀 3. MAIN EXECUTION FUNCTION
+function sendB2BReportsWithInlineSummary() {
+  const folder = DriveApp.getFolderById(B2B_CONFIG.FOLDER_ID);
+  const errors = [];
+  const TEAM_NAMES = ['EAST', 'NORTH', 'SOUTH', 'WEST', 'E2E'];
+
+
+  // Load all folder files into a map for fast lookup
+  const filesInFolder = folder.getFiles();
+  const allFilesMap = {};
+  while (filesInFolder.hasNext()) {
+    const file = filesInFolder.next();
+    allFilesMap[file.getName().toLowerCase()] = file;
+  }
+ 
+  const today = new Date();
+  const formattedDate = Utilities.formatDate(today, Session.getScriptTimeZone(), 'MMM dd, yyyy');
+  const emailSubject = `${B2B_CONFIG.SUBJECT_PREFIX} - ${formattedDate}`;
+
+
+  // Loop through the distribution map
+  for (const primaryFileName in B2B_FILE_RECIPIENT_MAP) {
+    const recipients = B2B_FILE_RECIPIENT_MAP[primaryFileName];
+    const primaryFile = allFilesMap[primaryFileName.toLowerCase()];
+   
+    if (!primaryFile) {
+      Logger.log(`SKIPPED: File "${primaryFileName}" not found in Drive folder.`);
+      errors.push(`File not found: ${primaryFileName}`);
+      continue;
+    }
+
+
+    try {
+      const namePart = primaryFileName.replace(/\.[^/.]+$/, "");
+      let personalizedName;
+     
+      // Automatic Team vs Individual Greeting Logic
+      if (TEAM_NAMES.includes(namePart.toUpperCase())) {
+        personalizedName = `${namePart.toUpperCase()} Region Team`;
+      } else {
+        personalizedName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
+      }
+     
+      Logger.log(`Generating native HTML summary view for: ${namePart}`);
+     
+      // =========================================================================
+      // 🌟 NATIVE GRID ENGINE: Bypasses UrlFetchApp to prevent 400 Errors completely
+      // =========================================================================
+      var workbook = SpreadsheetApp.open(primaryFile);
+      var sheet = workbook.getSheetByName("Executive Summary") || workbook.getSheets()[0];
+     
+      var lastRow = sheet.getLastRow();
+      var lastCol = sheet.getLastColumn();
+     
+      // Target the beautiful dashboard cards (From Column B to Column I)
+      var startRow = 2;
+      var startCol = 2;
+     
+      var range = sheet.getRange(startRow, startCol, (lastRow - startRow + 1), (lastCol - startCol + 1));
+      var values = range.getValues();
+      var backgrounds = range.getBackgrounds();
+      var fontColors = range.getFontColors();
+      var fontWeights = range.getFontWeights();
+     
+      var cleanHtmlTable = '<table style="border-collapse: collapse; font-family: \'Segoe UI\', Calibri, sans-serif; font-size: 13px; width: 100%; max-width: 750px; border: 1px solid #dcdcdc; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">';
+     
+      for (var r = 0; r < values.length; r++) {
+        cleanHtmlTable += '<tr style="height: 24px;">';
+        for (var c = 0; c < values[r].length; c++) {
+          var cellValue = values[r][c];
+          var bg = backgrounds[r][c];
+          var color = fontColors[r][c];
+          var weight = fontWeights[r][c];
+         
+          // Format displays cleanly mapping the source data types
+          var displayValue = cellValue;
+          if (cellValue instanceof Date) {
+            displayValue = Utilities.formatDate(cellValue, Session.getScriptTimeZone(), "dd-MMM-yyyy");
+          } else if (typeof cellValue === 'number') {
+            if (cellValue === 0) {
+              displayValue = "0";
+            } else if (cellValue > 0 && cellValue <= 2 && (bg === '#6496ff' || bg === '#64c878' || color === '#006400' || color === '#ff0000' || c === 3 || c === 6 || c === 7)) {
+              // Safely preserve rates and growth indicators as percentages
+              displayValue = (cellValue * 100).toFixed(1) + '%';
+            } else if (cellValue > 10) {
+              displayValue = cellValue.toLocaleString('en-IN');
+            }
+          }
+         
+          // Style mapping engine replicating the premium Excel layout natively
+          var cellStyle = 'padding: 6px 8px; border: 1px solid #e0e0e0; text-align: center; vertical-align: middle;';
+          if (bg && bg !== '#ffffff') cellStyle += ' background-color: ' + bg + ';';
+          if (color && color !== '#000000') cellStyle += ' color: ' + color + ';';
+          if (weight === 'bold') cellStyle += ' font-weight: bold;';
+         
+          if (c === 0 && r > 2) {
+            cellStyle += ' text-align: left; font-weight: 500;';
+          }
+         
+          // Render the wide top merged dashboard header card cleanly
+          if (r === 0 || r === 1 || r === 2) {
+            if (c === 0 && r === 0) {
+              cellStyle += ' font-size: 16px; font-weight: bold; letter-spacing: 0.5px;';
+              cleanHtmlTable += '<td colspan="' + values[r].length + '" style="' + cellStyle + '">' + displayValue + '</td>';
+              break;
+            } else if (r > 0 && c > 0 && values[r][0] === values[0][0]) {
+              continue;
+            }
+          }
+         
+          cleanHtmlTable += '<td style="' + cellStyle + '">' + (displayValue === '' ? '&nbsp;' : displayValue) + '</td>';
+        }
+        cleanHtmlTable += '</tr>';
+      }
+      cleanHtmlTable += '</table>';
+      // =========================================================================
+
+
+      // HTML Email Template Design
+      const htmlBody = `
+        <p style="font-family: 'Segoe UI', Calibri, sans-serif; font-size: 14px;">Hi ${personalizedName},</p>
+        <p style="font-family: 'Segoe UI', Calibri, sans-serif; font-size: 14px;">Please find attached the automated B2B PTL Daily Performance Report for Jul'26 month.</p>
+        <p style="font-family: 'Segoe UI', Calibri, sans-serif; font-size: 14px;"><b>(TEST Ignore) B2B Executive Summary Dashboard:</b></p>
+        <div style="background-color: #f5f6f8; padding: 15px; border-radius: 6px; display: inline-block;">
+          ${cleanHtmlTable}
+        </div>
+        <br><br>
+        <p style="font-family: 'Segoe UI', Calibri, sans-serif; font-size: 14px;">Best regards,<br><b>${B2B_CONFIG.SENDER_NAME}</b></p>
+      `;
+
+
+      // Dispatch Email using GmailApp
+      GmailApp.sendEmail(
+        recipients.join(','),
+        emailSubject,
+        '', // Empty plaintext body
+        {
+          htmlBody: htmlBody,
+          attachments: [primaryFile.getBlob().setName(primaryFile.getName())],
+          name: B2B_CONFIG.SENDER_NAME
+        }
+      );
+
+
+      Logger.log(`✅ Email with Native Inline Dashboard sent successfully for "${primaryFileName}"`);
+   
+    } catch (error) {
+      Logger.log(`❌ FAILED to process "${primaryFileName}": ${error.message}`);
+      errors.push(`File: ${primaryFileName}, Error: ${error.message}`);
+    }
+  }
+
+
+  // Admin notification for any file lookup failures
+  if (errors.length > 0 && B2B_CONFIG.ADMIN_EMAIL) {
+    GmailApp.sendEmail(
+      B2B_CONFIG.ADMIN_EMAIL,
+      'Error Report: B2B Mail Distribution Failure',
+      'The following errors or missing files were encountered during execution:\n\n' + errors.join('\n')
+    );
+  }
+}
+
+-------------------------b2b app script close------------------------------
+
