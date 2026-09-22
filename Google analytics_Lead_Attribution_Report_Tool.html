@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lead Attribution Report</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f4f0; color: #1a1a18; min-height: 100vh; padding: 24px; }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+  .subtitle { font-size: 13px; color: #666; margin-bottom: 28px; }
+  .upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 24px; }
+  .upload-card { background: #fff; border: 1.5px dashed #ccc; border-radius: 10px; padding: 20px; cursor: pointer; text-align: center; transition: border-color 0.15s, background 0.15s; }
+  .upload-card:hover, .upload-card.dragover { border-color: #378ADD; background: #f0f7ff; }
+  .upload-card.done { border-style: solid; border-color: #1D9E75; background: #f0faf6; cursor: default; }
+  .upload-card.done .upload-icon { color: #1D9E75; }
+  .upload-icon { font-size: 28px; margin-bottom: 8px; color: #999; display: block; }
+  .upload-label { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+  .upload-sub { font-size: 12px; color: #888; }
+  .upload-filename { font-size: 12px; color: #1D9E75; font-weight: 500; margin-top: 6px; }
+  input[type=file] { display: none; }
+  .run-btn { width: 100%; padding: 13px; background: #1a1a18; color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 500; cursor: pointer; margin-bottom: 20px; transition: opacity 0.15s; }
+  .run-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .run-btn:not(:disabled):hover { opacity: 0.85; }
+  .progress-wrap { background: #e8e6df; border-radius: 4px; height: 6px; margin-bottom: 10px; overflow: hidden; display: none; }
+  .progress-bar { height: 100%; background: #378ADD; transition: width 0.2s; width: 0%; }
+  .progress-label { font-size: 13px; color: #555; margin-bottom: 20px; display: none; }
+  .results { display: none; }
+  .section-title { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.06em; margin: 28px 0 12px; }
+  .stat-row { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat { background: #fff; border-radius: 8px; padding: 12px 16px; border: 0.5px solid #e0ddd5; flex: 1; min-width: 100px; text-align: center; }
+  .stat-val { font-size: 22px; font-weight: 600; }
+  .stat-lbl { font-size: 12px; color: #888; margin-top: 2px; }
+
+  /* Pivot table styling */
+  .pivot-wrap { background: #fff; border-radius: 10px; border: 0.5px solid #e0ddd5; overflow-x: auto; margin-bottom: 20px; }
+  .pivot-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 500px; }
+  .pivot-table th {
+    background: #1C3557;
+    color: #fff;
+    font-weight: 600;
+    font-size: 12px;
+    padding: 10px 12px;
+    text-align: center;
+    border: 1px solid #2a4a70;
+    white-space: nowrap;
+  }
+  .pivot-table th.row-header { text-align: left; }
+  .pivot-table td { padding: 7px 12px; border: 0.5px solid #e8e5de; text-align: center; }
+  .pivot-table td.label-cell { text-align: left; }
+  /* Source total rows */
+  .pivot-table tr.source-row td {
+    background: #BDD7EE;
+    font-weight: 700;
+    border: 1px solid #9bbcd8;
+  }
+  /* Grand total row */
+  .pivot-table tr.grand-total td {
+    background: #1C3557;
+    color: #fff;
+    font-weight: 700;
+    border: 1px solid #2a4a70;
+  }
+  /* Sub-source rows */
+  .pivot-table tr.sub-row td { background: #fff; }
+  .pivot-table tr.sub-row:nth-child(even) td { background: #f7f5f0; }
+  .pivot-table td.sub-label { padding-left: 22px; text-align: left; color: #444; }
+
+  .dl-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+  .dl-btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border: 0.5px solid #ccc; border-radius: 7px; font-size: 13px; cursor: pointer; background: #fff; color: #1a1a18; }
+  .dl-btn:hover { background: #f5f4f0; }
+  .dl-btn.primary { background: #1a1a18; color: #fff; border-color: #1a1a18; }
+  .dl-btn.primary:hover { opacity: 0.85; }
+  .reset-btn { background: none; border: none; color: #888; font-size: 13px; cursor: pointer; padding: 4px; margin-top: 12px; }
+  .reset-btn:hover { color: #333; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Lead Attribution Report</h1>
+  <p class="subtitle">Upload the raw GA export and raw Onboarding Analytics — get the fully attributed report and date-split pivots instantly.</p>
+
+  <div class="upload-grid">
+    <div class="upload-card" id="card-ga" onclick="document.getElementById('fi-ga').click()">
+      <span class="upload-icon">📊</span>
+      <div class="upload-label">Raw GA Export</div>
+      <div class="upload-sub">.csv · .xlsx · .xls</div>
+      <div class="upload-filename" id="fn-ga"></div>
+      <input type="file" id="fi-ga" accept=".csv,.xlsx,.xls">
+    </div>
+    <div class="upload-card" id="card-ob" onclick="document.getElementById('fi-ob').click()">
+      <span class="upload-icon">📋</span>
+      <div class="upload-label">Raw Onboarding Analytics</div>
+      <div class="upload-sub">.csv · .xlsx · .xls</div>
+      <div class="upload-filename" id="fn-ob"></div>
+      <input type="file" id="fi-ob" accept=".csv,.xlsx,.xls">
+    </div>
+  </div>
+
+  <button class="run-btn" id="run-btn" disabled>Generate Report</button>
+  <div class="progress-wrap" id="prog-wrap"><div class="progress-bar" id="prog-bar"></div></div>
+  <div class="progress-label" id="prog-label"></div>
+
+  <div class="results" id="results">
+    <div class="stat-row" id="stat-row"></div>
+
+    <div class="section-title">Pivot 1 — Leads by Source × Date</div>
+    <div class="pivot-wrap"><table class="pivot-table" id="pivot1-table"></table></div>
+
+    <div class="section-title">Pivot 2 — Leads by Source › Session Source × Date</div>
+    <div class="pivot-wrap"><table class="pivot-table" id="pivot2-table"></table></div>
+
+    <div class="section-title">Pivot 3 — Leads by Campaign Goal</div>
+    <div class="pivot-wrap"><table class="pivot-table" id="pivot3-table"></table></div>
+
+    <div class="dl-row">
+      <button class="dl-btn primary" id="dl-excel">⬇ Download Full Report (.xlsx)</button>
+      <button class="dl-btn" id="dl-leads">⬇ Lead contacts CSV</button>
+    </div>
+    <button class="reset-btn" onclick="resetTool()">↩ Upload new files</button>
+  </div>
+</div>
+
+<script>
+const SOURCE_ORDER = ['Google','Meta','Organic','Referral','Unattributed'];
+const COLORS_HEX = { Meta:'#378ADD', Google:'#1D9E75', Organic:'#639922', Referral:'#BA7517', Unattributed:'#888780' };
+
+const CAMPAIGN_MAP = {
+  '23840932247':        'Awareness Campaign (Google)',
+  '23847504220':        'Awareness Campaign (Google)',
+  '23685966943':        'Leads Gen (Google)- Brand Search',
+  '23808245656':        'Leads Gen (Google)- New Search',
+  '23852289819':        'Leads Gen (Google)- Shipping Agg',
+  '23878012457':        'Leads Gen (Google Pmax)',
+  '120244012751600443': 'Awareness Campaign (Meta)',
+  '120244921661810443': 'Primary Leads Gen Campaign (Meta)',
+  '120245351395710443': 'Retargeting Campaign (Meta)',
+  '120245730844490443': 'Testing Campaign (Meta)',
+};
+function campaignGoalFor(cid) { return CAMPAIGN_MAP[String(cid||'').trim()] || ''; }
+
+let gaData = null, obData = null;
+let resultRows = [], dates = [], pivot1 = {}, pivot2 = {}, pivot3 = {};
+
+// ── Categorisation ──────────────────────────────────────────────
+function categorize(src) {
+  const s = (src || '').toLowerCase().trim();
+  if (['fb /','ig /','facebook.com','l.facebook','lm.facebook','m.facebook','l.wl.co','site_source_name','{{','ig / social'].some(p => s.includes(p))) return 'Meta';
+  if (/^\d{15,}/.test(s)) return 'Meta';
+  if (s.includes('google / cpc') || s.includes('google/cpc')) return 'Google';
+  if (s.includes('organic') || s.includes('bing') || s.includes('yahoo') || s.includes('(direct)') || s.includes('(none)')) return 'Organic';
+  if (s.includes('referral') || s.includes('chatgpt') || s.includes('ai-assistant') || s.includes('youtube') || s.includes('instagram.com')) return 'Referral';
+  if (!s || s === '(not set)' || s === '(data not available)' || s === 'data not available') return 'Unattributed';
+  return 'Unattributed';
+}
+
+function extractCampaignId(src, cid) {
+  const cat = categorize(src);
+  if (cat === 'Meta') { const m = src.match(/(?:fb|ig)\s*\/\s*(\d+)/i); return m ? m[1] : ''; }
+  if (cat === 'Google') { return /^\d{8,}$/.test((cid||'').trim()) ? cid.trim() : ''; }
+  return '';
+}
+
+// ── File parsing ─────────────────────────────────────────────────
+function parseCSV(text) {
+  return text.split('\n').filter(l => l.trim()).map(line => {
+    const cols = []; let cur = '', inQ = false;
+    for (let c of line) {
+      if (c === '"') { inQ = !inQ; }
+      else if (c === ',' && !inQ) { cols.push(cur); cur = ''; }
+      else cur += c;
+    }
+    cols.push(cur);
+    return cols;
+  });
+}
+
+function parseExcel(buffer) {
+  const wb = XLSX.read(buffer, { type:'array', cellText:true, cellDates:false, raw:false });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header:1, raw:false, defval:'' });
+  return rows.map(row => row.map(c => String(c === null || c === undefined ? '' : c).trim()));
+}
+
+function parseGA(rows) {
+  let headerIdx = rows.findIndex(r => r.some(c => /contact name/i.test(c)));
+  if (headerIdx < 0) headerIdx = rows.findIndex(r => r.some(c => /^email$/i.test(c)));
+  if (headerIdx < 0) return [];
+  const headers = rows[headerIdx];
+  let nameIdx = headers.findIndex(h => /contact name/i.test(h));
+  let emailIdx = headers.findIndex(h => /^email$/i.test(h));
+  let phoneIdx = headers.findIndex(h => /phone/i.test(h));
+  let srcIdx   = headers.findIndex(h => /source.*medium/i.test(h) || /session source/i.test(h));
+  let cidIdx   = headers.findIndex(h => /campaign.*id/i.test(h) || /session campaign/i.test(h));
+
+  const sample = rows.slice(headerIdx+1).filter(r => r.some(v => v.includes('@'))).slice(0,3);
+  const shifted = sample.length > 0 && sample.every(r => (r[nameIdx]||'').includes('@'));
+  if (shifted) { [emailIdx, phoneIdx, srcIdx, cidIdx] = [nameIdx, emailIdx, phoneIdx, srcIdx]; }
+
+  const result = [];
+  for (let i = headerIdx+1; i < rows.length; i++) {
+    const r = rows[i];
+    const email = (r[emailIdx]||'').trim();
+    if (!email.includes('@')) continue;
+    const src = (r[srcIdx]||'').trim();
+    result.push({ email: email.toLowerCase(), phone: (r[phoneIdx]||'').trim(), sessionSource: src, campaignId: extractCampaignId(src, r[cidIdx]||''), source: categorize(src) });
+  }
+  return result;
+}
+
+function parseOB(rows) {
+  const headerIdx = rows.findIndex(r => r.some(c => /^email$/i.test(c)));
+  if (headerIdx < 0) return [];
+  const h = rows[headerIdx];
+  const ei = h.findIndex(c => /^email$/i.test(c));
+  const ni = h.findIndex(c => /contact.?name/i.test(c));
+  const pi = h.findIndex(c => /^phone$/i.test(c));
+  const di = h.findIndex(c => /signup.?date/i.test(c));
+  return rows.slice(headerIdx+1)
+    .filter(r => (r[ei]||'').includes('@'))
+    .map(r => ({ email:(r[ei]||'').toLowerCase().trim(), contactName:(r[ni]||'').trim(), phone:(r[pi]||'').trim(), signupDate:(r[di]||'').trim() }));
+}
+
+// ── Normalise date to DD-MM-YYYY for consistent sorting ──────────
+function normaliseDate(d) {
+  if (!d) return '';
+  // Already DD-MM-YYYY
+  if (/^\d{2}-\d{2}-\d{4}$/.test(d)) return d;
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}/.test(d)) { const p=d.slice(0,10).split('-'); return `${p[2]}-${p[1]}-${p[0]}`; }
+  // DD/MM/YYYY
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(d)) return d.replace(/\//g,'-');
+  return d;
+}
+
+function sortDateStr(d) {
+  // Convert DD-MM-YYYY to YYYYMMDD for sort
+  const p = d.split('-');
+  if (p.length === 3 && p[2].length === 4) return `${p[2]}${p[1]}${p[0]}`;
+  return d;
+}
+
+// ── Core processing ──────────────────────────────────────────────
+function process() {
+  setProgress(10, 'Building GA source map…');
+  const gaMap = new Map();
+  for (const row of gaData) { if (!gaMap.has(row.email)) gaMap.set(row.email, row); }
+
+  setProgress(40, 'Mapping sources to leads…');
+  resultRows = obData.map(lead => {
+    const match = gaMap.get(lead.email);
+    const date = normaliseDate(lead.signupDate);
+    if (match) { const g=campaignGoalFor(match.campaignId); return { ...lead, signupDate: date, source: match.source, sessionSource: match.sessionSource, campaignId: match.campaignId, campaignGoal: g }; }
+    return { ...lead, signupDate: date, source: 'Organic', sessionSource: '', campaignId: '', campaignGoal: '' };
+  });
+
+  setProgress(65, 'Building pivots…');
+
+  // Collect sorted unique dates
+  const dateSet = new Set(resultRows.map(r => r.signupDate).filter(Boolean));
+  dates = [...dateSet].sort((a,b) => sortDateStr(a).localeCompare(sortDateStr(b)));
+
+  // pivot1[source][date] = count
+  pivot1 = {};
+  SOURCE_ORDER.forEach(s => { pivot1[s] = {}; dates.forEach(d => pivot1[s][d] = 0); });
+  resultRows.forEach(r => { if (pivot1[r.source]) pivot1[r.source][r.signupDate] = (pivot1[r.source][r.signupDate]||0)+1; });
+
+  // pivot2[source][sessionSource][date] = count
+  pivot2 = {};
+  resultRows.forEach(r => {
+    const ss = r.sessionSource || '#N/A';
+    if (!pivot2[r.source]) pivot2[r.source] = {};
+    if (!pivot2[r.source][ss]) { pivot2[r.source][ss] = {}; dates.forEach(d => pivot2[r.source][ss][d] = 0); }
+    pivot2[r.source][ss][r.signupDate] = (pivot2[r.source][ss][r.signupDate]||0)+1;
+  });
+
+  // pivot3[campaignGoal] = count (grand total only, no date split per the image)
+  pivot3 = {};
+  resultRows.forEach(r => {
+    const g = r.campaignGoal;
+    if (!g) return;
+    pivot3[g] = (pivot3[g]||0) + 1;
+  });
+
+  setProgress(85, 'Rendering tables…');
+  setTimeout(render, 0);
+}
+
+function rowTotal(obj) { return Object.values(obj).reduce((a,b)=>a+b,0); }
+function colTotal(source_obj, date) { return Object.values(source_obj).reduce((a,ss)=>a+(ss[date]||0),0); }
+
+function render() {
+  const total = resultRows.length;
+
+  // Stats
+  document.getElementById('stat-row').innerHTML =
+    SOURCE_ORDER.map(s => `<div class="stat"><div class="stat-val" style="color:${COLORS_HEX[s]}">${rowTotal(pivot1[s]||{}).toLocaleString()}</div><div class="stat-lbl">${s}</div></div>`).join('') +
+    `<div class="stat"><div class="stat-val">${total.toLocaleString()}</div><div class="stat-lbl">Total Leads</div></div>`;
+
+  // ── Pivot 1 ──────────────────────────────────────────────────
+  let p1 = '<thead><tr>';
+  p1 += '<th class="row-header">Row Labels</th>';
+  dates.forEach(d => p1 += `<th>${d}</th>`);
+  p1 += '<th>Grand Total</th></tr></thead><tbody>';
+
+  let grandTotals = {}; dates.forEach(d => grandTotals[d]=0); let grandGrand=0;
+  SOURCE_ORDER.forEach(src => {
+    const srcData = pivot1[src]||{};
+    const srcTotal = rowTotal(srcData);
+    if (srcTotal === 0) return;
+    p1 += '<tr class="source-row">';
+    p1 += `<td class="label-cell">${src}</td>`;
+    dates.forEach(d => { const v=srcData[d]||0; grandTotals[d]+=v; p1+=`<td>${v||''}</td>`; });
+    grandGrand += srcTotal;
+    p1 += `<td>${srcTotal}</td></tr>`;
+  });
+  p1 += '<tr class="grand-total"><td class="label-cell">Grand Total</td>';
+  dates.forEach(d => p1 += `<td>${grandTotals[d]||''}</td>`);
+  p1 += `<td>${grandGrand}</td></tr></tbody>`;
+  document.getElementById('pivot1-table').innerHTML = p1;
+
+  // ── Pivot 2 ──────────────────────────────────────────────────
+  let p2 = '<thead><tr>';
+  p2 += '<th class="row-header">Row Labels</th>';
+  dates.forEach(d => p2 += `<th>${d}</th>`);
+  p2 += '<th>Grand Total</th></tr></thead><tbody>';
+
+  let g2Totals = {}; dates.forEach(d => g2Totals[d]=0); let g2Grand=0;
+  SOURCE_ORDER.forEach(src => {
+    const ssMap = pivot2[src];
+    if (!ssMap) return;
+    const srcTotals = {}; dates.forEach(d => srcTotals[d]=0);
+    Object.values(ssMap).forEach(ssData => dates.forEach(d => srcTotals[d]+=(ssData[d]||0)));
+    const srcTotal = rowTotal(srcTotals);
+    if (srcTotal === 0) return;
+
+    // Source header row
+    p2 += '<tr class="source-row">';
+    p2 += `<td class="label-cell">${src}</td>`;
+    dates.forEach(d => { g2Totals[d]+=(srcTotals[d]||0); p2+=`<td>${srcTotals[d]||''}</td>`; });
+    g2Grand += srcTotal;
+    p2 += `<td>${srcTotal}</td></tr>`;
+
+    // Sub-source rows sorted by total desc
+    const sorted = Object.entries(ssMap).sort((a,b)=>rowTotal(b[1])-rowTotal(a[1]));
+    sorted.forEach(([ss, ssData]) => {
+      const ssTotal = rowTotal(ssData);
+      if (ssTotal === 0) return;
+      p2 += '<tr class="sub-row">';
+      p2 += `<td class="sub-label">${ss}</td>`;
+      dates.forEach(d => p2+=`<td>${ssData[d]||''}</td>`);
+      p2 += `<td>${ssTotal}</td></tr>`;
+    });
+  });
+
+  p2 += '<tr class="grand-total"><td class="label-cell">Grand Total</td>';
+  dates.forEach(d => p2+=`<td>${g2Totals[d]||''}</td>`);
+  p2 += `<td>${g2Grand}</td></tr></tbody>`;
+  document.getElementById('pivot2-table').innerHTML = p2;
+
+  // ── Pivot 3 ──────────────────────────────────────────────────
+  const p3entries = Object.entries(pivot3).sort((a,b)=>b[1]-a[1]);
+  const p3total = p3entries.reduce((s,[,v])=>s+v,0);
+  let p3 = '<thead><tr><th class="row-header">Campaign Goal</th><th>Count of Email</th></tr></thead><tbody>';
+  p3entries.forEach(([goal,cnt]) => { p3+=`<tr class="sub-row"><td class="label-cell">${goal}</td><td>${cnt.toLocaleString()}</td></tr>`; });
+  p3 += `<tr class="grand-total"><td class="label-cell">Grand Total</td><td>${p3total.toLocaleString()}</td></tr></tbody>`;
+  document.getElementById('pivot3-table').innerHTML = p3;
+
+  document.getElementById('dl-excel').onclick = downloadExcel;
+  document.getElementById('dl-leads').onclick = downloadLeadsCSV;
+
+  setProgress(100, 'Done');
+  setTimeout(() => {
+    document.getElementById('prog-wrap').style.display='none';
+    document.getElementById('prog-label').style.display='none';
+    document.getElementById('results').style.display='block';
+  }, 300);
+}
+
+// ── Excel download ───────────────────────────────────────────────
+function downloadExcel() {
+  const wb = XLSX.utils.book_new();
+
+  // Sheet 1: Attribution data
+  const s1 = [['Email','Signup Date','Contact Name','Phone','Source','Session Source','Campaign ID','Campaign Goal']];
+  resultRows.forEach(r => s1.push([r.email, r.signupDate, r.contactName, r.phone, r.source, r.sessionSource, r.campaignId, r.campaignGoal||'']));
+  const ws1 = XLSX.utils.aoa_to_sheet(s1);
+  // Force campaign ID as text
+  for (let i=1;i<s1.length;i++) {
+    const cid=s1[i][6]; if(cid&&/^\d{10,}$/.test(String(cid))){
+      const ref=XLSX.utils.encode_cell({r:i,c:6});
+      if(ws1[ref]){ws1[ref].t='s';ws1[ref].v=String(cid);ws1[ref].w=String(cid);}
+    }
+  }
+  XLSX.utils.book_append_sheet(wb, ws1, 'Attribution Report');
+
+  // Sheet 2: Pivots as AOA
+  const total = resultRows.length;
+  const aoa = [];
+
+  // Header style helper - we'll do basic AOA, styling is done via cell styles below
+  const colHdrs = ['Row Labels', ...dates, 'Grand Total'];
+
+  // Pivot 1
+  aoa.push(colHdrs);
+  let gTotals={}; dates.forEach(d=>gTotals[d]=0); let gGrand=0;
+  SOURCE_ORDER.forEach(src=>{
+    const sd=pivot1[src]||{}; const st=rowTotal(sd); if(!st)return;
+    const row=[src]; dates.forEach(d=>{gTotals[d]+=(sd[d]||0);row.push(sd[d]||0);}); row.push(st); gGrand+=st; aoa.push(row);
+  });
+  const gtRow=['Grand Total']; dates.forEach(d=>gtRow.push(gTotals[d]||0)); gtRow.push(gGrand); aoa.push(gtRow);
+
+  aoa.push([]); aoa.push([]);
+
+  // Pivot 2
+  aoa.push(colHdrs);
+  let g2={};dates.forEach(d=>g2[d]=0);let g2g=0;
+  SOURCE_ORDER.forEach(src=>{
+    const ssMap=pivot2[src]; if(!ssMap)return;
+    const st2={}; dates.forEach(d=>st2[d]=0);
+    Object.values(ssMap).forEach(sd=>dates.forEach(d=>st2[d]+=(sd[d]||0)));
+    const tot2=rowTotal(st2); if(!tot2)return;
+    const hdr=[src]; dates.forEach(d=>{g2[d]+=(st2[d]||0);hdr.push(st2[d]||0);}); g2g+=tot2; hdr.push(tot2); aoa.push(hdr);
+    Object.entries(ssMap).sort((a,b)=>rowTotal(b[1])-rowTotal(a[1])).forEach(([ss,sd])=>{
+      const t=rowTotal(sd);if(!t)return;
+      const r=[ss]; dates.forEach(d=>r.push(sd[d]||0)); r.push(t); aoa.push(r);
+    });
+  });
+  const gt2=['Grand Total']; dates.forEach(d=>gt2.push(g2[d]||0)); gt2.push(g2g); aoa.push(gt2);
+
+  // Pivot 3
+  aoa.push([]); aoa.push([]);
+  aoa.push(['Campaign Goal', 'Count of Email']);
+  const p3e = Object.entries(pivot3).sort((a,b)=>b[1]-a[1]);
+  p3e.forEach(([g,v]) => aoa.push([g, v]));
+  aoa.push(['Grand Total', p3e.reduce((s,[,v])=>s+v,0)]);
+
+  const ws2 = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Apply styles to ws2
+  const B = {top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}};
+  const HEADER_STYLE      = { font:{bold:true,color:{rgb:'FFFFFF'},sz:11}, fill:{patternType:'solid',fgColor:{rgb:'1C3557'}}, alignment:{horizontal:'center',vertical:'center',wrapText:true}, border:B };
+  const HEADER_LEFT_STYLE = { font:{bold:true,color:{rgb:'FFFFFF'},sz:11}, fill:{patternType:'solid',fgColor:{rgb:'1C3557'}}, alignment:{horizontal:'left',vertical:'center',wrapText:true}, border:B };
+  const SOURCE_STYLE       = { font:{bold:true,sz:11},                      fill:{patternType:'solid',fgColor:{rgb:'BDD7EE'}}, alignment:{horizontal:'center',vertical:'center'}, border:B };
+  const SOURCE_LABEL_STYLE = { font:{bold:true,sz:11},                      fill:{patternType:'solid',fgColor:{rgb:'BDD7EE'}}, alignment:{horizontal:'left',vertical:'center'},   border:B };
+  const GT_STYLE           = { font:{bold:true,color:{rgb:'FFFFFF'},sz:11}, fill:{patternType:'solid',fgColor:{rgb:'1C3557'}}, alignment:{horizontal:'center',vertical:'center'}, border:B };
+  const GT_LABEL_STYLE     = { font:{bold:true,color:{rgb:'FFFFFF'},sz:11}, fill:{patternType:'solid',fgColor:{rgb:'1C3557'}}, alignment:{horizontal:'left',vertical:'center'},   border:B };
+  const NORMAL_CENTER      = { alignment:{horizontal:'center',vertical:'center'}, border:B };
+  const NORMAL_LEFT        = { alignment:{horizontal:'left',vertical:'center',indent:1}, border:B };
+
+  const ncols = colHdrs.length;
+
+  // Find header rows and source/GT rows by matching aoa content
+  const sourceNames = new Set(SOURCE_ORDER);
+  aoa.forEach((row, ri) => {
+    if (!row || !row.length) return;
+    const first = String(row[0]||'');
+    const isHeader = first === 'Row Labels' || first === 'Campaign Goal';
+    const isSource = sourceNames.has(first);
+    const isGT = first === 'Grand Total';
+    const isSub = !isHeader && !isSource && !isGT && first;
+
+    for (let ci=0; ci<ncols && ci<row.length; ci++) {
+      const ref = XLSX.utils.encode_cell({r:ri,c:ci});
+      if (!ws2[ref]) continue;
+      if (isHeader)       ws2[ref].s = ci===0 ? HEADER_LEFT_STYLE : HEADER_STYLE;
+      else if (isSource)  ws2[ref].s = ci===0 ? SOURCE_LABEL_STYLE : SOURCE_STYLE;
+      else if (isGT)      ws2[ref].s = ci===0 ? GT_LABEL_STYLE : GT_STYLE;
+      else if (isSub)     ws2[ref].s = ci===0 ? NORMAL_LEFT : NORMAL_CENTER;
+    }
+  });
+
+  // Column widths, row heights, freeze header
+  ws2['!cols'] = [{ wch: 42 }, ...dates.map(()=>({wch:14})), {wch:14}];
+  // Set header rows (row 0 and the second pivot header) to height 22
+  ws2['!rows'] = [];
+  aoa.forEach((row,ri) => {
+    ws2['!rows'][ri] = (row[0]==='Row Labels') ? {hpt:22,hpx:22} : {hpt:18,hpx:18};
+  });
+  ws2['!freeze'] = { xSplit:1, ySplit:1, topLeftCell:'B2' };
+
+  XLSX.utils.book_append_sheet(wb, ws2, 'Pivots');
+  XLSX.writeFile(wb, 'Lead_Attribution_Report.xlsx', { cellStyles: true, bookSST: false });
+}
+
+function downloadLeadsCSV() {
+  const rows = [['Contact Name','Email','Phone','Signup Date','Source','Session Source','Campaign ID','Campaign Goal']];
+  resultRows.forEach(r => rows.push([r.contactName,r.email,r.phone,r.signupDate,r.source,r.sessionSource,r.campaignId,r.campaignGoal||'']));
+  const csv = rows.map(r=>r.map(v=>{
+    const s=String(v||'');
+    return /^\d{10,}$/.test(s)?`"=""${s}"""` : `"${s.replace(/"/g,'""')}"`;
+  }).join(',')).join('\n');
+  const a=document.createElement('a'); a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv); a.download='lead_contacts_attributed.csv'; a.click();
+}
+
+function setProgress(pct,label){
+  document.getElementById('prog-wrap').style.display='block';
+  document.getElementById('prog-label').style.display='block';
+  document.getElementById('prog-bar').style.width=pct+'%';
+  document.getElementById('prog-label').textContent=label;
+}
+
+function checkReady(){ document.getElementById('run-btn').disabled=!(gaData&&obData); }
+
+function resetTool(){
+  gaData=obData=null; resultRows=[];dates=[];pivot1={};pivot2={};pivot3={};
+  ['ga','ob'].forEach(k=>{document.getElementById('card-'+k).classList.remove('done');document.getElementById('fn-'+k).textContent='';});
+  document.getElementById('results').style.display='none';
+  document.getElementById('prog-wrap').style.display='none';
+  document.getElementById('prog-label').style.display='none';
+  checkReady();
+}
+
+function loadFile(file,type){
+  const isExcel=/\.(xlsx|xls)$/i.test(file.name);
+  const fn=document.getElementById('fn-'+type);
+  fn.textContent='⏳ Reading…';
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const rows=isExcel?parseExcel(new Uint8Array(ev.target.result)):parseCSV(ev.target.result);
+    if(type==='ga'){gaData=parseGA(rows);fn.textContent=`✓ ${file.name} (${gaData.length} rows)`;}
+    else{obData=parseOB(rows);fn.textContent=`✓ ${file.name} (${obData.length} leads)`;}
+    document.getElementById('card-'+type).classList.add('done');
+    checkReady();
+  };
+  if(isExcel)reader.readAsArrayBuffer(file);else reader.readAsText(file);
+}
+
+document.getElementById('run-btn').addEventListener('click',()=>{
+  document.getElementById('run-btn').disabled=true;
+  setProgress(5,'Starting…');
+  setTimeout(process,50);
+});
+
+['ga','ob'].forEach(type=>{
+  const input=document.getElementById('fi-'+type);
+  const card=document.getElementById('card-'+type);
+  input.addEventListener('change',e=>{if(e.target.files[0])loadFile(e.target.files[0],type);});
+  card.addEventListener('dragover',e=>{e.preventDefault();card.classList.add('dragover');});
+  card.addEventListener('dragleave',()=>card.classList.remove('dragover'));
+  card.addEventListener('drop',e=>{
+    e.preventDefault();card.classList.remove('dragover');
+    const f=e.dataTransfer.files[0];if(f){input.files=e.dataTransfer.files;loadFile(f,type);}
+  });
+});
+</script>
+</body>
+</html>
